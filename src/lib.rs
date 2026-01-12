@@ -5,9 +5,11 @@ mod dsp {
     use nih_plug::prelude::util;
     use std::f32::consts::PI;
 
-    const PRE_EMPH_HZ: f32 = 140.0;
+    const PRE_HP_HZ: f32 = 120.0;
+    const PRE_EMPH_HZ: f32 = 900.0;
     const TONE_MIN_HZ: f32 = 800.0;
     const TONE_MAX_HZ: f32 = 6500.0;
+    const DC_BLOCK_HZ: f32 = 18.0;
     const ASYM_BIAS: f32 = 0.08;
     const ANTI_DENORMAL: f32 = 1.0e-24;
 
@@ -39,16 +41,20 @@ mod dsp {
 
     #[derive(Clone, Copy)]
     struct ChannelState {
+        pre_tighten: OnePole,
         pre_emphasis: OnePole,
         tone: OnePole,
+        dc_block: OnePole,
         prev_input: f32,
     }
 
     impl Default for ChannelState {
         fn default() -> Self {
             Self {
+                pre_tighten: OnePole::default(),
                 pre_emphasis: OnePole::default(),
                 tone: OnePole::default(),
+                dc_block: OnePole::default(),
                 prev_input: 0.0,
             }
         }
@@ -56,8 +62,10 @@ mod dsp {
 
     impl ChannelState {
         fn reset(&mut self) {
+            self.pre_tighten.reset();
             self.pre_emphasis.reset();
             self.tone.reset();
+            self.dc_block.reset();
             self.prev_input = 0.0;
         }
     }
@@ -97,6 +105,14 @@ mod dsp {
             pre_emphasis_coeff(self.sample_rate)
         }
 
+        pub fn pre_tighten_coeff(&self) -> f32 {
+            pre_tighten_coeff(self.sample_rate)
+        }
+
+        pub fn dc_block_coeff(&self) -> f32 {
+            dc_block_coeff(self.sample_rate)
+        }
+
         pub fn process_sample(
             &mut self,
             channel: usize,
@@ -105,39 +121,51 @@ mod dsp {
             tone: f32,
             level: f32,
             pre_coeff: f32,
+            pre_tighten_coeff: f32,
+            dc_block_coeff: f32,
         ) -> f32 {
             let state = &mut self.channels[channel];
             let drive_gain = drive_to_gain(drive);
             let level_gain = level_to_gain(level);
+            let comp_gain = drive_to_compensation(drive);
             let tone_coeff = tone_to_coeff(tone, self.sample_rate);
+            let bias = ASYM_BIAS * drive;
 
-            // Pre-emphasis trims lows to keep the clipping tight.
-            let pre = state
-                .pre_emphasis
-                .highpass(input + ANTI_DENORMAL, pre_coeff);
+            // Pre-filtering tightens lows before clipping.
+            let tightened = state
+                .pre_tighten
+                .highpass(input + ANTI_DENORMAL, pre_tighten_coeff);
+            let pre = state.pre_emphasis.highpass(tightened, pre_coeff);
 
             // 2x oversampling with linear interpolation and averaging on the way down.
             let up_a = (state.prev_input + pre) * 0.5;
             state.prev_input = pre;
-            let y_a = soft_clip(up_a * drive_gain);
-            let y_b = soft_clip(pre * drive_gain);
+            let y_a = soft_clip((up_a * drive_gain) + bias);
+            let y_b = soft_clip((pre * drive_gain) + bias);
             let clipped = (y_a + y_b) * 0.5;
 
-            // Post tone filter tames the top-end after clipping.
-            let toned = state.tone.lowpass(clipped, tone_coeff);
+            // Remove DC offset introduced by asymmetry.
+            let dc_free = state.dc_block.highpass(clipped, dc_block_coeff);
 
-            toned * level_gain
+            // Post tone filter tames the top-end after clipping.
+            let toned = state.tone.lowpass(dc_free, tone_coeff);
+
+            toned * comp_gain * level_gain
         }
     }
 
     fn soft_clip(input: f32) -> f32 {
-        let biased = input + ASYM_BIAS;
-        biased.tanh() - ASYM_BIAS.tanh()
+        input.tanh()
     }
 
     fn drive_to_gain(drive: f32) -> f32 {
-        let shaped = drive.clamp(0.0, 1.0).powf(2.2);
-        util::db_to_gain(shaped * 24.0)
+        let shaped = drive.clamp(0.0, 1.0).powf(3.0);
+        util::db_to_gain(shaped * 30.0)
+    }
+
+    fn drive_to_compensation(drive: f32) -> f32 {
+        let shaped = drive.clamp(0.0, 1.0).powf(1.6);
+        util::db_to_gain(-10.0 * shaped)
     }
 
     fn level_to_gain(level: f32) -> f32 {
@@ -153,6 +181,14 @@ mod dsp {
 
     fn pre_emphasis_coeff(sample_rate: f32) -> f32 {
         one_pole_coeff(PRE_EMPH_HZ, sample_rate)
+    }
+
+    fn pre_tighten_coeff(sample_rate: f32) -> f32 {
+        one_pole_coeff(PRE_HP_HZ, sample_rate)
+    }
+
+    fn dc_block_coeff(sample_rate: f32) -> f32 {
+        one_pole_coeff(DC_BLOCK_HZ, sample_rate)
     }
 
     fn one_pole_coeff(cutoff: f32, sample_rate: f32) -> f32 {
@@ -190,6 +226,8 @@ struct BddPlusParams {
     pub tone: FloatParam,
     #[id = "level"]
     pub level: FloatParam,
+    #[id = "bypass"]
+    pub bypass: BoolParam,
 }
 
 impl Default for BddPlus {
@@ -222,6 +260,9 @@ impl Default for BddPlusParams {
                 .with_unit(" %")
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
+            bypass: BoolParam::new("Bypass", false)
+                .make_bypass()
+                .hide_in_generic_ui(),
         }
     }
 }
@@ -280,6 +321,10 @@ impl Plugin for BddPlus {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        if self.params.bypass.value() {
+            return ProcessStatus::Normal;
+        }
+
         if buffer.is_empty() || buffer.channels() == 0 {
             return ProcessStatus::Normal;
         }
@@ -289,6 +334,8 @@ impl Plugin for BddPlus {
         }
 
         let pre_coeff = self.dsp.pre_emphasis_coeff();
+        let pre_tighten_coeff = self.dsp.pre_tighten_coeff();
+        let dc_block_coeff = self.dsp.dc_block_coeff();
 
         for mut channels in buffer.iter_samples() {
             let drive = self.params.drive.smoothed.next();
@@ -298,9 +345,16 @@ impl Plugin for BddPlus {
             for channel_idx in 0..channels.len() {
                 // SAFETY: channel_idx is within channels.len().
                 let sample = unsafe { channels.get_unchecked_mut(channel_idx) };
-                let processed =
-                    self.dsp
-                        .process_sample(channel_idx, *sample, drive, tone, level, pre_coeff);
+                let processed = self.dsp.process_sample(
+                    channel_idx,
+                    *sample,
+                    drive,
+                    tone,
+                    level,
+                    pre_coeff,
+                    pre_tighten_coeff,
+                    dc_block_coeff,
+                );
                 *sample = processed;
             }
         }

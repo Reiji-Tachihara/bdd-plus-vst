@@ -55,7 +55,7 @@ Provide recommended parameter-to-dsp mappings (log/exp curves where appropriate)
 
 - Keep DSP code self-contained and testable (separate module for DSP)
 - Prefer small structs with explicit state (filters, oversampler buffers)
-- Add comments that explain _why_ each step exists
+- Add Japanese comments that explain _why_ each step exists and _What_ is this code doing here
 - Provide a minimal unit test or offline test function where possible
 
 ## Deliverables
