@@ -5,12 +5,30 @@ mod dsp {
     use nih_plug::prelude::util;
     use std::f32::consts::PI;
 
-    const PRE_HP_HZ: f32 = 120.0;
-    const PRE_EMPH_HZ: f32 = 900.0;
-    const TONE_MIN_HZ: f32 = 800.0;
-    const TONE_MAX_HZ: f32 = 6500.0;
+    const PRE_HP_HZ: f32 = 100.0;
+    const PRE_EMPH_HZ: f32 = 600.0;
+    const TONE_MIN_HZ: f32 = 700.0;
+    const TONE_MAX_HZ: f32 = 5200.0;
     const DC_BLOCK_HZ: f32 = 18.0;
     const ASYM_BIAS: f32 = 0.08;
+    const DRIVE_KNEE: f32 = 0.6;
+    const DRIVE_STAGE1_DB: f32 = 30.0;
+    const DRIVE_PRE_BOOST_DB: f32 = 6.0;
+    const SECOND_STAGE_MIN_GAIN: f32 = 1.0;
+    const SECOND_STAGE_MAX_GAIN: f32 = 2.0;
+    const SECOND_STAGE_MIX_MAX: f32 = 0.75;
+    const INTERSTAGE_LP_HZ: f32 = 7500.0;
+    const POST_LPF_BASE_HZ: f32 = 11200.0;
+    const POST_LPF_REDUCTION_HZ: f32 = 3800.0;
+    const POST_LPF_MIX_MAX: f32 = 0.6;
+    const VINTAGE_LPF_BASE_HZ: f32 = 9800.0;
+    const VINTAGE_LPF_REDUCTION_HZ: f32 = 1800.0;
+    const AA_CUTOFF_RATIO: f32 = 0.45;
+    const PRE_SOFT_LP_HZ: f32 = 16000.0;
+    const PRE_SOFTEN_MIX: f32 = 0.08;
+    const DEHARSH_START: f32 = 0.5;
+    const DEHARSH_CUTOFF_SCALE: f32 = 0.12;
+    const ASYM_BIAS_REDUCTION: f32 = 0.65;
     const ANTI_DENORMAL: f32 = 1.0e-24;
 
     #[derive(Clone, Copy)]
@@ -43,8 +61,15 @@ mod dsp {
     struct ChannelState {
         pre_tighten: OnePole,
         pre_emphasis: OnePole,
+        pre_soften: OnePole,
+        interstage: OnePole,
         tone: OnePole,
+        post_clip_lpf: OnePole,
+        post_clip_lpf2: OnePole,
+        vintage_lpf: OnePole,
         dc_block: OnePole,
+        aa_stage1: OnePole,
+        aa_stage2: OnePole,
         prev_input: f32,
     }
 
@@ -53,8 +78,15 @@ mod dsp {
             Self {
                 pre_tighten: OnePole::default(),
                 pre_emphasis: OnePole::default(),
+                pre_soften: OnePole::default(),
+                interstage: OnePole::default(),
                 tone: OnePole::default(),
+                post_clip_lpf: OnePole::default(),
+                post_clip_lpf2: OnePole::default(),
+                vintage_lpf: OnePole::default(),
                 dc_block: OnePole::default(),
+                aa_stage1: OnePole::default(),
+                aa_stage2: OnePole::default(),
                 prev_input: 0.0,
             }
         }
@@ -64,8 +96,15 @@ mod dsp {
         fn reset(&mut self) {
             self.pre_tighten.reset();
             self.pre_emphasis.reset();
+            self.pre_soften.reset();
+            self.interstage.reset();
             self.tone.reset();
+            self.post_clip_lpf.reset();
+            self.post_clip_lpf2.reset();
+            self.vintage_lpf.reset();
             self.dc_block.reset();
+            self.aa_stage1.reset();
+            self.aa_stage2.reset();
             self.prev_input = 0.0;
         }
     }
@@ -125,30 +164,56 @@ mod dsp {
             dc_block_coeff: f32,
         ) -> f32 {
             let state = &mut self.channels[channel];
-            let drive_gain = drive_to_gain(drive);
+            let drive_gain = drive_stage1_gain(drive) * drive_to_pre_boost(drive);
             let level_gain = level_to_gain(level);
             let comp_gain = drive_to_compensation(drive);
-            let tone_coeff = tone_to_coeff(tone, self.sample_rate);
-            let bias = ASYM_BIAS * drive;
+            let deharsh = deharsh_amount(drive);
+            let tone_coeff = tone_to_coeff(tone, self.sample_rate, deharsh);
+            let bias_reduction = bias_reduction(drive);
+            let bias = ASYM_BIAS * drive * (1.0 - (ASYM_BIAS_REDUCTION * bias_reduction));
+            let aa_coeff = aa_coeff(self.sample_rate);
+            let interstage_coeff = interstage_coeff(self.sample_rate);
+            let pre_soften_coeff = pre_soften_coeff(self.sample_rate);
+            let post_lpf_coeff = post_lpf_coeff(self.sample_rate, deharsh);
+            let post_lpf_mix = post_lpf_mix(deharsh);
+            let vintage_coeff = vintage_lpf_coeff(self.sample_rate, drive);
+            let stage2_gain = drive_stage2_gain(drive);
+            let stage2_mix = drive_stage2_mix(drive);
 
             // Pre-filtering tightens lows before clipping.
             let tightened = state
                 .pre_tighten
                 .highpass(input + ANTI_DENORMAL, pre_tighten_coeff);
             let pre = state.pre_emphasis.highpass(tightened, pre_coeff);
+            let softened = state.pre_soften.lowpass(pre, pre_soften_coeff);
+            let pre = pre + (softened - pre) * PRE_SOFTEN_MIX;
 
             // 2x oversampling with linear interpolation and averaging on the way down.
             let up_a = (state.prev_input + pre) * 0.5;
             state.prev_input = pre;
             let y_a = soft_clip((up_a * drive_gain) + bias);
             let y_b = soft_clip((pre * drive_gain) + bias);
-            let clipped = (y_a + y_b) * 0.5;
+            let inter_a = state.interstage.lowpass(y_a, interstage_coeff);
+            let inter_b = state.interstage.lowpass(y_b, interstage_coeff);
+            let stage2_a = soft_clip(inter_a * stage2_gain);
+            let stage2_b = soft_clip(inter_b * stage2_gain);
+            let blend_a = inter_a + (stage2_a - inter_a) * stage2_mix;
+            let blend_b = inter_b + (stage2_b - inter_b) * stage2_mix;
+            let aa_a = state.aa_stage1.lowpass(blend_a, aa_coeff);
+            let aa_a = state.aa_stage2.lowpass(aa_a, aa_coeff);
+            let aa_b = state.aa_stage1.lowpass(blend_b, aa_coeff);
+            let aa_b = state.aa_stage2.lowpass(aa_b, aa_coeff);
+            let clipped = (aa_a + aa_b) * 0.5;
 
             // Remove DC offset introduced by asymmetry.
             let dc_free = state.dc_block.highpass(clipped, dc_block_coeff);
 
             // Post tone filter tames the top-end after clipping.
-            let toned = state.tone.lowpass(dc_free, tone_coeff);
+            let post_lpf = state.post_clip_lpf.lowpass(dc_free, post_lpf_coeff);
+            let post_lpf = state.post_clip_lpf2.lowpass(post_lpf, post_lpf_coeff);
+            let post_lpf = dc_free + (post_lpf - dc_free) * post_lpf_mix;
+            let vintage = state.vintage_lpf.lowpass(post_lpf, vintage_coeff);
+            let toned = state.tone.lowpass(vintage, tone_coeff);
 
             toned * comp_gain * level_gain
         }
@@ -158,14 +223,29 @@ mod dsp {
         input.tanh()
     }
 
-    fn drive_to_gain(drive: f32) -> f32 {
-        let shaped = drive.clamp(0.0, 1.0).powf(3.0);
-        util::db_to_gain(shaped * 30.0)
+    fn drive_stage1_gain(drive: f32) -> f32 {
+        let shaped = drive_curve(drive, 2.2);
+        util::db_to_gain(shaped * DRIVE_STAGE1_DB)
+    }
+
+    fn drive_to_pre_boost(drive: f32) -> f32 {
+        let shaped = drive.clamp(0.0, 1.0);
+        util::db_to_gain(DRIVE_PRE_BOOST_DB * shaped)
+    }
+
+    fn drive_stage2_gain(drive: f32) -> f32 {
+        let mid = drive_mid_focus(drive);
+        SECOND_STAGE_MIN_GAIN + (SECOND_STAGE_MAX_GAIN - SECOND_STAGE_MIN_GAIN) * mid
+    }
+
+    fn drive_stage2_mix(drive: f32) -> f32 {
+        let mid = drive_mid_focus(drive);
+        SECOND_STAGE_MIX_MAX * mid
     }
 
     fn drive_to_compensation(drive: f32) -> f32 {
-        let shaped = drive.clamp(0.0, 1.0).powf(1.6);
-        util::db_to_gain(-10.0 * shaped)
+        let shaped = drive_curve(drive, 1.4);
+        util::db_to_gain(-5.0 * shaped)
     }
 
     fn level_to_gain(level: f32) -> f32 {
@@ -173,10 +253,11 @@ mod dsp {
         util::db_to_gain(db)
     }
 
-    fn tone_to_coeff(tone: f32, sample_rate: f32) -> f32 {
+    fn tone_to_coeff(tone: f32, sample_rate: f32, deharsh: f32) -> f32 {
         let shaped = tone.clamp(0.0, 1.0).powf(0.7);
         let cutoff = TONE_MIN_HZ + (TONE_MAX_HZ - TONE_MIN_HZ) * shaped;
-        one_pole_coeff(cutoff, sample_rate)
+        let adjusted = cutoff * (1.0 - (DEHARSH_CUTOFF_SCALE * deharsh));
+        one_pole_coeff(adjusted, sample_rate)
     }
 
     fn pre_emphasis_coeff(sample_rate: f32) -> f32 {
@@ -191,6 +272,54 @@ mod dsp {
         one_pole_coeff(DC_BLOCK_HZ, sample_rate)
     }
 
+    fn interstage_coeff(sample_rate: f32) -> f32 {
+        one_pole_coeff(INTERSTAGE_LP_HZ, sample_rate * 2.0)
+    }
+
+    fn post_lpf_coeff(sample_rate: f32, deharsh: f32) -> f32 {
+        let cutoff = (POST_LPF_BASE_HZ - (POST_LPF_REDUCTION_HZ * deharsh)).max(40.0);
+        one_pole_coeff(cutoff, sample_rate)
+    }
+
+    fn post_lpf_mix(deharsh: f32) -> f32 {
+        POST_LPF_MIX_MAX * deharsh
+    }
+
+    fn aa_coeff(sample_rate: f32) -> f32 {
+        one_pole_coeff(sample_rate * AA_CUTOFF_RATIO, sample_rate * 2.0)
+    }
+
+    fn pre_soften_coeff(sample_rate: f32) -> f32 {
+        one_pole_coeff(PRE_SOFT_LP_HZ, sample_rate)
+    }
+
+    fn vintage_lpf_coeff(sample_rate: f32, drive: f32) -> f32 {
+        let shaped = drive_curve(drive, 1.2);
+        let cutoff = VINTAGE_LPF_BASE_HZ - (VINTAGE_LPF_REDUCTION_HZ * shaped);
+        one_pole_coeff(cutoff.max(40.0), sample_rate)
+    }
+
+    fn bias_reduction(drive: f32) -> f32 {
+        smoothstep(DEHARSH_START, 1.0, drive)
+    }
+
+    fn deharsh_amount(drive: f32) -> f32 {
+        ((drive - DEHARSH_START) / (1.0 - DEHARSH_START)).clamp(0.0, 1.0)
+    }
+
+    fn drive_mid_focus(drive: f32) -> f32 {
+        smoothstep(0.3, 0.7, drive)
+    }
+
+    fn drive_curve(drive: f32, power: f32) -> f32 {
+        let shaped = (drive / DRIVE_KNEE).clamp(0.0, 1.0);
+        shaped.powf(power)
+    }
+
+    fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
     fn one_pole_coeff(cutoff: f32, sample_rate: f32) -> f32 {
         let x = (-2.0 * PI * cutoff / sample_rate).exp();
         (1.0 - x).clamp(0.0, 1.0)
