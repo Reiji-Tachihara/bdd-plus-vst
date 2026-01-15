@@ -7,6 +7,9 @@ mod dsp {
 
     const PRE_HP_HZ: f32 = 100.0;
     const PRE_EMPH_HZ: f32 = 600.0;
+    const PRE_EQ_FREQ_HZ: f32 = 120.0;
+    const PRE_EQ_Q: f32 = 0.6;
+    const PRE_EQ_GAIN_DB: f32 = -1.0;
     const TONE_MIN_HZ: f32 = 700.0;
     const TONE_MAX_HZ: f32 = 5200.0;
     const DC_BLOCK_HZ: f32 = 18.0;
@@ -57,8 +60,38 @@ mod dsp {
         }
     }
 
+    #[derive(Clone, Copy, Default)]
+    struct Biquad {
+        z1: f32,
+        z2: f32,
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct BiquadCoeffs {
+        b0: f32,
+        b1: f32,
+        b2: f32,
+        a1: f32,
+        a2: f32,
+    }
+
+    impl Biquad {
+        fn reset(&mut self) {
+            self.z1 = 0.0;
+            self.z2 = 0.0;
+        }
+
+        fn process(&mut self, input: f32, c: BiquadCoeffs) -> f32 {
+            let out = (c.b0 * input) + self.z1;
+            self.z1 = (c.b1 * input) - (c.a1 * out) + self.z2;
+            self.z2 = (c.b2 * input) - (c.a2 * out);
+            out
+        }
+    }
+
     #[derive(Clone, Copy)]
     struct ChannelState {
+        pre_eq: Biquad,
         pre_tighten: OnePole,
         pre_emphasis: OnePole,
         pre_soften: OnePole,
@@ -76,6 +109,7 @@ mod dsp {
     impl Default for ChannelState {
         fn default() -> Self {
             Self {
+                pre_eq: Biquad::default(),
                 pre_tighten: OnePole::default(),
                 pre_emphasis: OnePole::default(),
                 pre_soften: OnePole::default(),
@@ -94,6 +128,7 @@ mod dsp {
 
     impl ChannelState {
         fn reset(&mut self) {
+            self.pre_eq.reset();
             self.pre_tighten.reset();
             self.pre_emphasis.reset();
             self.pre_soften.reset();
@@ -112,6 +147,7 @@ mod dsp {
     pub struct Dsp {
         sample_rate: f32,
         channels: Vec<ChannelState>,
+        pre_eq_coeffs: BiquadCoeffs,
     }
 
     impl Default for Dsp {
@@ -119,6 +155,7 @@ mod dsp {
             Self {
                 sample_rate: 44100.0,
                 channels: Vec::new(),
+                pre_eq_coeffs: BiquadCoeffs::default(),
             }
         }
     }
@@ -127,6 +164,12 @@ mod dsp {
         pub fn initialize(&mut self, sample_rate: f32, channels: usize) {
             self.sample_rate = sample_rate.max(1.0);
             self.channels.resize_with(channels, ChannelState::default);
+            self.pre_eq_coeffs = peaking_eq_coeffs(
+                PRE_EQ_FREQ_HZ,
+                PRE_EQ_Q,
+                PRE_EQ_GAIN_DB,
+                self.sample_rate,
+            );
             self.reset();
         }
 
@@ -181,9 +224,10 @@ mod dsp {
             let stage2_mix = drive_stage2_mix(drive);
 
             // Pre-filtering tightens lows before clipping.
+            let eq = state.pre_eq.process(input + ANTI_DENORMAL, self.pre_eq_coeffs);
             let tightened = state
                 .pre_tighten
-                .highpass(input + ANTI_DENORMAL, pre_tighten_coeff);
+                .highpass(eq, pre_tighten_coeff);
             let pre = state.pre_emphasis.highpass(tightened, pre_coeff);
             let softened = state.pre_soften.lowpass(pre, pre_soften_coeff);
             let pre = pre + (softened - pre) * PRE_SOFTEN_MIX;
@@ -319,6 +363,30 @@ mod dsp {
     fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
         let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
+    }
+
+    fn peaking_eq_coeffs(freq_hz: f32, q: f32, gain_db: f32, sample_rate: f32) -> BiquadCoeffs {
+        let omega = 2.0 * PI * (freq_hz / sample_rate);
+        let sin_omega = omega.sin();
+        let cos_omega = omega.cos();
+        let alpha = sin_omega / (2.0 * q.max(0.001));
+        let a = 10.0_f32.powf(gain_db / 40.0);
+
+        let b0 = 1.0 + alpha * a;
+        let b1 = -2.0 * cos_omega;
+        let b2 = 1.0 - alpha * a;
+        let a0 = 1.0 + alpha / a;
+        let a1 = -2.0 * cos_omega;
+        let a2 = 1.0 - alpha / a;
+
+        let inv_a0 = 1.0 / a0;
+        BiquadCoeffs {
+            b0: b0 * inv_a0,
+            b1: b1 * inv_a0,
+            b2: b2 * inv_a0,
+            a1: a1 * inv_a0,
+            a2: a2 * inv_a0,
+        }
     }
     fn one_pole_coeff(cutoff: f32, sample_rate: f32) -> f32 {
         let x = (-2.0 * PI * cutoff / sample_rate).exp();
