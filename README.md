@@ -1,32 +1,31 @@
-# bdd_plus
+# BDD+
 
-## Building
+Rust 製のオーバードライブ系オーディオプラグインです。  
+VST3/CLAP に対応し、Cubase 13（Windows）で動作確認しています。
 
-After installing [Rust](https://rustup.rs/), you can compile bdd_plus as follows:
+## ビルド
+
+Rust をインストールした上で、以下を実行してください。
 
 ```shell
 cargo xtask bundle bdd_plus --release
 ```
 
-# BDD+
+## 仕様
 
-Rust で実装した VST3 オーディオプラグイン（歪みエフェクター）。
-Cubase 13 で動作確認済み。
+- パラメータ: Drive / Tone / Level / Bypass（ホストバイパス連携）
+- フォーマット: VST3 / CLAP
+- GUI: egui ベースのカスタム GUI（背景テクスチャ + 3 縦スライダー）
 
-## Features
+## 構成
 
-- Drive / Tone / Level
-- VST3 / CLAP 対応
-- Rust + nih-plug + egui
+- `src/lib.rs`: プラグイン本体
+- `src/params.rs`: パラメータ定義
+- `src/dsp/`: DSP 実装
+- `src/gui/`: GUI 実装
+- `assets/bg.png`: 背景テクスチャ
 
-## Why Rust?
+## 開発メモ
 
-- メモリ安全性
-- リアルタイム DSP での安心感
-- C++依存を最小化
-
-## What I learned
-
-- Rust によるオーディオ DSP 設計
-- xtask によるビルド自動化
-- Windows / MSVC 環境での Rust 開発
+- nih-plug を使用
+- 2x オーバーサンプリングを前提とした歪み構成

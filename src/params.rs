@@ -17,7 +17,7 @@ pub(crate) struct BddPlusParams {
 impl Default for BddPlusParams {
     fn default() -> Self {
         Self {
-            drive: FloatParam::new("Drive", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 })
+            drive: FloatParam::new("Drive", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(GUI_STEP_SIZE)
                 .with_smoother(SmoothingStyle::Linear(50.0))
                 .with_unit(" %")
@@ -29,7 +29,7 @@ impl Default for BddPlusParams {
                 .with_unit(" %")
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
-            level: FloatParam::new("Level", 0.8, FloatRange::Linear { min: 0.0, max: 1.0 })
+            level: FloatParam::new("Level", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(GUI_STEP_SIZE)
                 .with_smoother(SmoothingStyle::Linear(50.0))
                 .with_unit(" %")

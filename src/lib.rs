@@ -2,6 +2,7 @@ use nih_plug::prelude::*;
 use std::sync::Arc;
 
 mod dsp;
+mod gui;
 mod params;
 
 use params::BddPlusParams;
@@ -48,6 +49,10 @@ impl Plugin for BddPlus {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        gui::create_editor(self.params.clone())
     }
 
     fn initialize(
