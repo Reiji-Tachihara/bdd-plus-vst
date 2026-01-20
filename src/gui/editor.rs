@@ -9,12 +9,19 @@ use std::sync::Arc;
 use super::theme;
 use crate::params::BddPlusParams;
 
+// 現在のテクスチャマネージャを識別する。
+fn tex_manager_id(ctx: &egui::Context) -> usize {
+    Arc::as_ptr(&ctx.tex_manager()) as usize
+}
+
 // GUIの描画で使う一時状態。
 struct UiState {
     // 背景テクスチャのハンドル。
     bg_texture: Option<egui::TextureHandle>,
     // 背景画像のピクセルサイズ。
     bg_size_px: [usize; 2],
+    // テクスチャマネージャの識別子。
+    bg_tex_manager_id: usize,
 }
 
 // 背景画像をUI全体に対して縮小する比率。
@@ -39,17 +46,31 @@ pub(super) fn create_editor(
             bg_texture: None,
             // 背景サイズは先に設定する。
             bg_size_px,
+            // 初期は未設定。
+            bg_tex_manager_id: 0,
         },
         |ctx, state| {
-            // 初回描画で背景テクスチャを読み込む。
-            if state.bg_texture.is_none() {
-                // 背景テクスチャとサイズを読み込む。
+            // ウィンドウ生成のたびに背景テクスチャを読み込む。
+            let (texture, size) = load_bg_texture(ctx);
+            state.bg_texture = Some(texture);
+            state.bg_size_px = size;
+            state.bg_tex_manager_id = tex_manager_id(ctx);
+        },
+        move |ctx, setter, state| {
+            let tex_manager_id = tex_manager_id(ctx);
+            // テクスチャが破棄されていたら再読み込みする。
+            let needs_reload = state.bg_tex_manager_id != tex_manager_id
+                || match &state.bg_texture {
+                    Some(texture) => texture.size() == [0, 0],
+                    None => true,
+                };
+            if needs_reload {
                 let (texture, size) = load_bg_texture(ctx);
                 state.bg_texture = Some(texture);
                 state.bg_size_px = size;
+                state.bg_tex_manager_id = tex_manager_id;
             }
-        },
-        move |ctx, setter, state| {
+
             egui::CentralPanel::default().show(ctx, |ui| {
                 // DPI変換用の係数。
                 let pixels_per_point = ui.ctx().pixels_per_point();
@@ -144,13 +165,9 @@ fn draw_fixed_layout(
     let base = rect.min;
 
     // スライダーの構成(パラメータとラベル)。
-    let columns = [
-        (&params.drive, "DRIVE"),
-        (&params.tone, "TONE"),
-        (&params.level, "LEVEL"),
-    ];
+    let columns = [(&params.drive), (&params.tone), (&params.level)];
 
-    for (idx, (param, label)) in columns.iter().enumerate() {
+    for (idx, param) in columns.iter().enumerate() {
         // 列のX座標。
         let x = start_x + (idx as f32 * (column_width + column_gap));
         // 列の描画矩形。
@@ -162,7 +179,7 @@ fn draw_fixed_layout(
             ui,
             setter,
             param,
-            label,
+            idx,
             column_rect,
             slider_width,
             value_height,
@@ -180,8 +197,8 @@ fn draw_column_at(
     setter: &ParamSetter,
     // 対象パラメータ。
     param: &nih_plug::params::FloatParam,
-    // 表示ラベル。
-    label: &str,
+    // eguiのIDに使う列番号。
+    column_idx: usize,
     // 列の描画矩形。
     rect: Rect,
     // スライダー幅。
@@ -205,7 +222,7 @@ fn draw_column_at(
         ),
         Vec2::new(slider_width, theme::SLIDER_HEIGHT * scale),
     );
-    draw_slider_at(ui, setter, param, slider_rect, scale, label);
+    draw_slider_at(ui, setter, param, slider_rect, scale, column_idx);
 }
 
 // パラメータ値の小窓を描画する。
@@ -251,11 +268,11 @@ fn draw_slider_at(
     rect: Rect,
     // DPIスケール。
     scale: f32,
-    // eguiのID種別。
-    id_source: &str,
+    // eguiのIDに使う列番号。
+    column_idx: usize,
 ) {
     // マウス操作のレスポンス。
-    let response = ui.interact(rect, ui.id().with(id_source), Sense::click_and_drag());
+    let response = ui.interact(rect, ui.id().with(column_idx), Sense::click_and_drag());
     // 描画用ペインタ。
     let painter = ui.painter();
 
