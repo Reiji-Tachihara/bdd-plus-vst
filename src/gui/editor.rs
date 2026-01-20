@@ -29,9 +29,9 @@ const BG_SCALE: f32 = 0.6;
 
 // 値表示窓の矩形 (背景画像のピクセル座標)。
 const VALUE_WINDOWS_PX: [(f32, f32, f32, f32); 3] = [
-    (135.0, 157.0, 205.0, 114.0),
-    (402.0, 156.0, 206.0, 115.0),
-    (677.0, 158.0, 208.0, 113.0),
+    (120.0, 157.0, 205.0, 114.0),
+    (392.0, 156.0, 206.0, 115.0),
+    (667.0, 158.0, 208.0, 113.0),
 ];
 
 // スライダー溝の矩形 (背景画像のピクセル座標)。
@@ -123,7 +123,8 @@ fn draw_background(
 ) {
     // 描画用ペインタ。
     let painter = ui.painter();
-    if let Some(texture) = &state.bg_texture { // 背景テクスチャ。
+    if let Some(texture) = &state.bg_texture {
+        // 背景テクスチャ。
         // 読み込んだ背景画像を描画する。
         painter.image(
             texture.id(),
@@ -169,15 +170,7 @@ fn draw_fixed_layout(
             Pos2::new(base.x + slot_x * scale, base.y + slot_y * scale),
             Vec2::new(slot_w * scale, slot_h * scale),
         );
-        draw_column_at(
-            ui,
-            setter,
-            param,
-            idx,
-            value_rect,
-            slider_rect,
-            scale,
-        );
+        draw_column_at(ui, setter, param, idx, value_rect, slider_rect, scale);
     }
 }
 
@@ -225,11 +218,12 @@ fn draw_value_window_at(
 
     // 0..100の表示用値。
     let value_text = (value.clamp(0.0, 1.0) * 100.0).round() as i32;
+    let font_size = (rect.height() * 0.6).max(6.0);
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
         format!("{value_text:>3}"),
-        FontId::proportional(14.0 * scale),
+        FontId::proportional(font_size),
         theme::TEXT_VALUE,
     );
 }
@@ -273,7 +267,8 @@ fn draw_slider_at(
         setter.begin_set_parameter(param);
     }
     if response.dragged() {
-        if let Some(pos) = response.interact_pointer_pos() { // マウス位置。
+        if let Some(pos) = response.interact_pointer_pos() {
+            // マウス位置。
             // ドラッグ位置から新しい値を計算する。
             let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
             setter.set_parameter(param, new_value);
@@ -283,7 +278,8 @@ fn draw_slider_at(
         setter.end_set_parameter(param);
     }
     if response.clicked() {
-        if let Some(pos) = response.interact_pointer_pos() { // マウス位置。
+        if let Some(pos) = response.interact_pointer_pos() {
+            // マウス位置。
             // クリック位置から新しい値を計算する。
             let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
             setter.begin_set_parameter(param);
@@ -316,7 +312,8 @@ fn load_bg_texture(
         .map(|img| img.to_rgba8());
 
     // eguiで使う画像とサイズ。
-    let (color_image, size) = if let Some(image) = image { // 読み込んだ画像。
+    let (color_image, size) = if let Some(image) = image {
+        // 読み込んだ画像。
         // 背景画像のサイズ。
         let size = [image.width() as usize, image.height() as usize];
         (
@@ -328,8 +325,10 @@ fn load_bg_texture(
         let size = [256, 256];
         // 代替画像のピクセル配列。
         let mut pixels = Vec::with_capacity(size[0] * size[1]);
-        for y in 0..size[1] { // Y方向の走査。
-            for x in 0..size[0] { // X方向の走査。
+        for y in 0..size[1] {
+            // Y方向の走査。
+            for x in 0..size[0] {
+                // X方向の走査。
                 // 擬似的なノイズ値。
                 let n = ((x * 13 + y * 17) & 0x1f) as u8;
                 // 赤成分。
