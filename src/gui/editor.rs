@@ -27,6 +27,20 @@ struct UiState {
 // 背景画像をUI全体に対して縮小する比率。
 const BG_SCALE: f32 = 0.6;
 
+// 値表示窓の矩形 (背景画像のピクセル座標)。
+const VALUE_WINDOWS_PX: [(f32, f32, f32, f32); 3] = [
+    (135.0, 157.0, 205.0, 114.0),
+    (402.0, 156.0, 206.0, 115.0),
+    (677.0, 158.0, 208.0, 113.0),
+];
+
+// スライダー溝の矩形 (背景画像のピクセル座標)。
+const SLIDER_SLOTS_PX: [(f32, f32, f32, f32); 3] = [
+    (207.0, 325.0, 54.0, 624.0),
+    (477.0, 325.0, 58.0, 624.0),
+    (753.0, 325.0, 54.0, 624.0),
+];
+
 // GUIエディタのエントリポイント。
 pub(super) fn create_editor(
     // プラグインのパラメータ。
@@ -136,31 +150,8 @@ fn draw_fixed_layout(
     // DPI変換係数。
     pixels_per_point: f32,
 ) {
-    // DPIに応じたスケール。
-    let scale = 1.0 / pixels_per_point;
-    // パネル内側の余白。
-    let padding = theme::PANEL_PADDING * scale;
-    // 1列の幅。
-    let column_width = theme::COLUMN_WIDTH * scale;
-    // 列間の隙間。
-    let column_gap = 12.0 * scale;
-    // 値表示の高さ。
-    let value_height = theme::VALUE_HEIGHT * scale;
-    // スライダーの高さ。
-    let slider_height = theme::SLIDER_HEIGHT * scale;
-    // スライダーの幅。
-    let slider_width = theme::SLIDER_WIDTH * scale;
-    // 値表示とスライダーの間隔。
-    let value_gap = 6.0 * scale;
-    // 1列の総高さ。
-    let column_height = value_height + value_gap + slider_height;
-
-    // 3列分の総幅。
-    let total_width = (column_width * 3.0) + (column_gap * 2.0);
-    // 左端の開始位置。
-    let start_x = (rect.width() - total_width) * 0.5;
-    // 上端の開始位置。
-    let start_y = padding;
+    // DPIと背景スケールを反映した係数。
+    let scale = BG_SCALE / pixels_per_point;
     // 背景矩形の原点。
     let base = rect.min;
 
@@ -168,22 +159,23 @@ fn draw_fixed_layout(
     let columns = [(&params.drive), (&params.tone), (&params.level)];
 
     for (idx, param) in columns.iter().enumerate() {
-        // 列のX座標。
-        let x = start_x + (idx as f32 * (column_width + column_gap));
-        // 列の描画矩形。
-        let column_rect = Rect::from_min_size(
-            Pos2::new(base.x + x, base.y + start_y),
-            Vec2::new(column_width, column_height),
+        let (value_x, value_y, value_w, value_h) = VALUE_WINDOWS_PX[idx];
+        let value_rect = Rect::from_min_size(
+            Pos2::new(base.x + value_x * scale, base.y + value_y * scale),
+            Vec2::new(value_w * scale, value_h * scale),
+        );
+        let (slot_x, slot_y, slot_w, slot_h) = SLIDER_SLOTS_PX[idx];
+        let slider_rect = Rect::from_min_size(
+            Pos2::new(base.x + slot_x * scale, base.y + slot_y * scale),
+            Vec2::new(slot_w * scale, slot_h * scale),
         );
         draw_column_at(
             ui,
             setter,
             param,
             idx,
-            column_rect,
-            slider_width,
-            value_height,
-            value_gap,
+            value_rect,
+            slider_rect,
             scale,
         );
     }
@@ -199,29 +191,15 @@ fn draw_column_at(
     param: &nih_plug::params::FloatParam,
     // eguiのIDに使う列番号。
     column_idx: usize,
-    // 列の描画矩形。
-    rect: Rect,
-    // スライダー幅。
-    slider_width: f32,
-    // 値表示高さ。
-    value_height: f32,
-    // 値表示の隙間。
-    value_gap: f32,
+    // 値表示矩形。
+    value_rect: Rect,
+    // スライダー矩形。
+    slider_rect: Rect,
     // DPIスケール。
     scale: f32,
 ) {
-    // 値表示の矩形。
-    let value_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), value_height));
     draw_value_window_at(ui, value_rect, param.value(), scale);
 
-    // スライダーの矩形。
-    let slider_rect = Rect::from_min_size(
-        Pos2::new(
-            rect.center().x - (slider_width * 0.5),
-            value_rect.bottom() + value_gap,
-        ),
-        Vec2::new(slider_width, theme::SLIDER_HEIGHT * scale),
-    );
     draw_slider_at(ui, setter, param, slider_rect, scale, column_idx);
 }
 
