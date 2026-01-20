@@ -9,17 +9,46 @@ use std::sync::Arc;
 use super::theme;
 use crate::params::BddPlusParams;
 
-// GUIで使う状態（背景テクスチャなど）を保持する
-struct UiState {
-    bg_texture: Option<egui::TextureHandle>,
-    bg_size_px: [usize; 2],
+// 現在のテクスチャマネージャを識別する。
+fn tex_manager_id(ctx: &egui::Context) -> usize {
+    Arc::as_ptr(&ctx.tex_manager()) as usize
 }
 
+// GUIの描画で使う一時状態。
+struct UiState {
+    // 背景テクスチャのハンドル。
+    bg_texture: Option<egui::TextureHandle>,
+    // 背景画像のピクセルサイズ。
+    bg_size_px: [usize; 2],
+    // テクスチャマネージャの識別子。
+    bg_tex_manager_id: usize,
+}
+
+// 背景画像をUI全体に対して縮小する比率。
 const BG_SCALE: f32 = 0.6;
 
-// GUIエディタのエントリポイント
-pub(super) fn create_editor(params: Arc<BddPlusParams>) -> Option<Box<dyn Editor>> {
+// 値表示窓の矩形 (背景画像のピクセル座標)。
+const VALUE_WINDOWS_PX: [(f32, f32, f32, f32); 3] = [
+    (120.0, 157.0, 205.0, 114.0),
+    (392.0, 156.0, 206.0, 115.0),
+    (667.0, 158.0, 208.0, 113.0),
+];
+
+// スライダー溝の矩形 (背景画像のピクセル座標)。
+const SLIDER_SLOTS_PX: [(f32, f32, f32, f32); 3] = [
+    (207.0, 325.0, 54.0, 624.0),
+    (477.0, 325.0, 58.0, 624.0),
+    (753.0, 325.0, 54.0, 624.0),
+];
+
+// GUIエディタのエントリポイント。
+pub(super) fn create_editor(
+    // プラグインのパラメータ。
+    params: Arc<BddPlusParams>,
+) -> Option<Box<dyn Editor>> {
+    // 背景画像のピクセルサイズ。
     let bg_size_px = bg_size_px();
+    // 初期のウィンドウサイズを決める状態。
     let egui_state = EguiState::from_size(
         (bg_size_px[0] as f32 * BG_SCALE) as u32,
         (bg_size_px[1] as f32 * BG_SCALE) as u32,
@@ -27,33 +56,54 @@ pub(super) fn create_editor(params: Arc<BddPlusParams>) -> Option<Box<dyn Editor
     create_egui_editor(
         egui_state,
         UiState {
+            // まだテクスチャは読み込まれていない。
             bg_texture: None,
+            // 背景サイズは先に設定する。
             bg_size_px,
+            // 初期は未設定。
+            bg_tex_manager_id: 0,
         },
         |ctx, state| {
-            // 初回のみ背景テクスチャを生成・キャッシュする
-            if state.bg_texture.is_none() {
+            // ウィンドウ生成のたびに背景テクスチャを読み込む。
+            let (texture, size) = load_bg_texture(ctx);
+            state.bg_texture = Some(texture);
+            state.bg_size_px = size;
+            state.bg_tex_manager_id = tex_manager_id(ctx);
+        },
+        move |ctx, setter, state| {
+            let tex_manager_id = tex_manager_id(ctx);
+            // テクスチャが破棄されていたら再読み込みする。
+            let needs_reload = state.bg_tex_manager_id != tex_manager_id
+                || match &state.bg_texture {
+                    Some(texture) => texture.size() == [0, 0],
+                    None => true,
+                };
+            if needs_reload {
                 let (texture, size) = load_bg_texture(ctx);
                 state.bg_texture = Some(texture);
                 state.bg_size_px = size;
+                state.bg_tex_manager_id = tex_manager_id;
             }
-        },
-        move |ctx, setter, state| {
+
             egui::CentralPanel::default().show(ctx, |ui| {
-                // DPI補正: points <-> pixels の換算に必ず使用する
+                // DPI変換用の係数。
                 let pixels_per_point = ui.ctx().pixels_per_point();
+                // 背景サイズ(ポイント単位)。
                 let bg_size_points = Vec2::new(
                     state.bg_size_px[0] as f32 / pixels_per_point,
                     state.bg_size_px[1] as f32 / pixels_per_point,
                 ) * BG_SCALE;
+                // 最小サイズを背景に合わせる。
                 ui.set_min_size(bg_size_points);
+                // パネルの領域。
                 let panel_rect = ui.available_rect_before_wrap();
+                // 背景の描画領域。
                 let bg_rect = Rect::from_min_size(panel_rect.min, bg_size_points);
 
-                // 背景は固定サイズ・固定位置で描画する
+                // 背景はパネル全体に描画する。
                 draw_background(ui, state, bg_rect);
 
-                // UI配置は背景の矩形を基準に行う
+                // UI本体は背景の矩形に合わせて配置する。
                 ui.allocate_ui_at_rect(bg_rect, |ui| {
                     draw_fixed_layout(ui, setter, &params, bg_rect, pixels_per_point);
                 });
@@ -62,10 +112,20 @@ pub(super) fn create_editor(params: Arc<BddPlusParams>) -> Option<Box<dyn Editor
     )
 }
 
-// 背景画像（またはフォールバック）を描画する
-fn draw_background(ui: &egui::Ui, state: &UiState, rect: Rect) {
+// 背景画像を描画する。
+fn draw_background(
+    // 描画対象のUI。
+    ui: &egui::Ui,
+    // 背景状態。
+    state: &UiState,
+    // 背景を描く矩形。
+    rect: Rect,
+) {
+    // 描画用ペインタ。
     let painter = ui.painter();
     if let Some(texture) = &state.bg_texture {
+        // 背景テクスチャ。
+        // 読み込んだ背景画像を描画する。
         painter.image(
             texture.id(),
             rect,
@@ -73,88 +133,81 @@ fn draw_background(ui: &egui::Ui, state: &UiState, rect: Rect) {
             Color32::WHITE,
         );
     } else {
+        // 背景がない場合は単色で埋める。
         painter.rect_filled(rect, 0.0, Color32::from_rgb(45, 42, 38));
     }
 }
 
-// 背景基準の固定座標でレイアウトを組み立てる
+// 背景上に3本スライダーの固定レイアウトを描画する。
 fn draw_fixed_layout(
+    // 描画対象のUI。
     ui: &mut egui::Ui,
+    // パラメータ変更用のセッター。
     setter: &ParamSetter,
+    // プラグインパラメータ。
     params: &BddPlusParams,
+    // 背景矩形。
     rect: Rect,
+    // DPI変換係数。
     pixels_per_point: f32,
 ) {
-    // すべての寸法は pixels_per_point で補正して扱う
-    let scale = 1.0 / pixels_per_point;
-    let padding = theme::PANEL_PADDING * scale;
-    let column_width = theme::COLUMN_WIDTH * scale;
-    let column_gap = 12.0 * scale;
-    let value_height = theme::VALUE_HEIGHT * scale;
-    let slider_height = theme::SLIDER_HEIGHT * scale;
-    let slider_width = theme::SLIDER_WIDTH * scale;
-    let value_gap = 6.0 * scale;
-    let column_height = value_height + value_gap + slider_height;
-
-    let total_width = (column_width * 3.0) + (column_gap * 2.0);
-    let start_x = (rect.width() - total_width) * 0.5;
-    let start_y = padding;
+    // DPIと背景スケールを反映した係数。
+    let scale = BG_SCALE / pixels_per_point;
+    // 背景矩形の原点。
     let base = rect.min;
 
-    // スライダー列の並び順
-    let columns = [
-        (&params.drive, "DRIVE"),
-        (&params.tone, "TONE"),
-        (&params.level, "LEVEL"),
-    ];
+    // スライダーの構成(パラメータとラベル)。
+    let columns = [(&params.drive), (&params.tone), (&params.level)];
 
-    for (idx, (param, label)) in columns.iter().enumerate() {
-        let x = start_x + (idx as f32 * (column_width + column_gap));
-        let column_rect = Rect::from_min_size(
-            Pos2::new(base.x + x, base.y + start_y),
-            Vec2::new(column_width, column_height),
+    for (idx, param) in columns.iter().enumerate() {
+        let (value_x, value_y, value_w, value_h) = VALUE_WINDOWS_PX[idx];
+        let value_rect = Rect::from_min_size(
+            Pos2::new(base.x + value_x * scale, base.y + value_y * scale),
+            Vec2::new(value_w * scale, value_h * scale),
         );
-        draw_column_at(
-            ui,
-            setter,
-            param,
-            label,
-            column_rect,
-            slider_width,
-            value_height,
-            value_gap,
-            scale,
+        let (slot_x, slot_y, slot_w, slot_h) = SLIDER_SLOTS_PX[idx];
+        let slider_rect = Rect::from_min_size(
+            Pos2::new(base.x + slot_x * scale, base.y + slot_y * scale),
+            Vec2::new(slot_w * scale, slot_h * scale),
         );
+        draw_column_at(ui, setter, param, idx, value_rect, slider_rect, scale);
     }
 }
 
-// 1列分の値表示・スライダー・ラベルを描画する
+// 1列分の値表示とスライダーを描画する。
 fn draw_column_at(
+    // 描画対象のUI。
     ui: &mut egui::Ui,
+    // パラメータ変更用のセッター。
     setter: &ParamSetter,
+    // 対象パラメータ。
     param: &nih_plug::params::FloatParam,
-    label: &str,
-    rect: Rect,
-    slider_width: f32,
-    value_height: f32,
-    value_gap: f32,
+    // eguiのIDに使う列番号。
+    column_idx: usize,
+    // 値表示矩形。
+    value_rect: Rect,
+    // スライダー矩形。
+    slider_rect: Rect,
+    // DPIスケール。
     scale: f32,
 ) {
-    let value_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), value_height));
     draw_value_window_at(ui, value_rect, param.value(), scale);
 
-    let slider_rect = Rect::from_min_size(
-        Pos2::new(
-            rect.center().x - (slider_width * 0.5),
-            value_rect.bottom() + value_gap,
-        ),
-        Vec2::new(slider_width, theme::SLIDER_HEIGHT * scale),
-    );
-    draw_slider_at(ui, setter, param, slider_rect, scale, label);
+    draw_slider_at(ui, setter, param, slider_rect, scale, column_idx);
 }
 
-// 数値表示の“黒い窓”を描画する
-fn draw_value_window_at(ui: &egui::Ui, rect: Rect, value: f32, scale: f32) {
+// パラメータ値の小窓を描画する。
+fn draw_value_window_at(
+    // 描画対象のUI。
+    ui: &egui::Ui,
+    // 値表示矩形。
+    rect: Rect,
+    // パラメータ値。
+    value: f32,
+    // DPIスケール。
+    scale: f32,
+) {
+    // 描画用ペインタ。
     let painter = ui.painter();
     painter.rect_filled(rect, theme::VALUE_RADIUS * scale, theme::VALUE_BG);
     painter.rect_filled(
@@ -163,33 +216,47 @@ fn draw_value_window_at(ui: &egui::Ui, rect: Rect, value: f32, scale: f32) {
         theme::VALUE_BG_INNER,
     );
 
+    // 0..100の表示用値。
     let value_text = (value.clamp(0.0, 1.0) * 100.0).round() as i32;
+    let font_size = (rect.height() * 0.6).max(6.0);
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
         format!("{value_text:>3}"),
-        FontId::proportional(14.0 * scale),
+        FontId::proportional(font_size),
         theme::TEXT_VALUE,
     );
 }
 
-// 縦スライダーを固定座標で描画し、ドラッグ操作を処理する
+// 縦型スライダーを描画してドラッグ操作を処理する。
 fn draw_slider_at(
+    // 描画対象のUI。
     ui: &mut egui::Ui,
+    // パラメータ変更用のセッター。
     setter: &ParamSetter,
+    // 対象パラメータ。
     param: &nih_plug::params::FloatParam,
+    // スライダー矩形。
     rect: Rect,
+    // DPIスケール。
     scale: f32,
-    id_source: &str,
+    // eguiのIDに使う列番号。
+    column_idx: usize,
 ) {
-    let response = ui.interact(rect, ui.id().with(id_source), Sense::click_and_drag());
+    // マウス操作のレスポンス。
+    let response = ui.interact(rect, ui.id().with(column_idx), Sense::click_and_drag());
+    // 描画用ペインタ。
     let painter = ui.painter();
 
+    // スライダートラックの矩形。
     let track_rect = Rect::from_center_size(rect.center(), Vec2::new(6.0, rect.height()));
     painter.rect_filled(track_rect, 3.0, theme::SLIDER_TRACK);
 
+    // 現在のパラメータ値。
     let value = param.value().clamp(0.0, 1.0);
+    // ノブのY座標。
     let knob_y = rect.bottom() - (value * rect.height());
+    // ノブの矩形。
     let knob_rect = Rect::from_center_size(
         Pos2::new(rect.center().x, knob_y),
         Vec2::new(rect.width(), 14.0 * scale),
@@ -201,6 +268,8 @@ fn draw_slider_at(
     }
     if response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
+            // マウス位置。
+            // ドラッグ位置から新しい値を計算する。
             let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
             setter.set_parameter(param, new_value);
         }
@@ -210,6 +279,8 @@ fn draw_slider_at(
     }
     if response.clicked() {
         if let Some(pos) = response.interact_pointer_pos() {
+            // マウス位置。
+            // クリック位置から新しい値を計算する。
             let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
             setter.begin_set_parameter(param);
             setter.set_parameter(param, new_value);
@@ -218,8 +289,9 @@ fn draw_slider_at(
     }
 }
 
-// 埋め込み画像のサイズ（px）を取得する
+// 背景画像のピクセルサイズを返す。
 fn bg_size_px() -> [usize; 2] {
+    // 背景画像バイト列。
     const BG_BYTES: &[u8] = include_bytes!("../../assets/bg.png");
     image::load_from_memory(BG_BYTES)
         .ok()
@@ -227,27 +299,43 @@ fn bg_size_px() -> [usize; 2] {
         .unwrap_or([256, 256])
 }
 
-// 背景テクスチャを生成し、サイズと一緒に返す
-fn load_bg_texture(ctx: &egui::Context) -> (egui::TextureHandle, [usize; 2]) {
+// 背景画像のテクスチャを読み込み、ない場合は代替画像を作る。
+fn load_bg_texture(
+    // eguiのコンテキスト。
+    ctx: &egui::Context,
+) -> (egui::TextureHandle, [usize; 2]) {
+    // 背景画像バイト列。
     const BG_BYTES: &[u8] = include_bytes!("../../assets/bg.png");
+    // 画像をRGBAに変換する。
     let image = image::load_from_memory(BG_BYTES)
         .ok()
         .map(|img| img.to_rgba8());
 
+    // eguiで使う画像とサイズ。
     let (color_image, size) = if let Some(image) = image {
+        // 読み込んだ画像。
+        // 背景画像のサイズ。
         let size = [image.width() as usize, image.height() as usize];
         (
             egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
             size,
         )
     } else {
+        // 代替画像のサイズ。
         let size = [256, 256];
+        // 代替画像のピクセル配列。
         let mut pixels = Vec::with_capacity(size[0] * size[1]);
         for y in 0..size[1] {
+            // Y方向の走査。
             for x in 0..size[0] {
+                // X方向の走査。
+                // 擬似的なノイズ値。
                 let n = ((x * 13 + y * 17) & 0x1f) as u8;
+                // 赤成分。
                 let r = 60 + n;
+                // 緑成分。
                 let g = 54 + (n / 2);
+                // 青成分。
                 let b = 48 + (n / 3);
                 pixels.push(Color32::from_rgb(r, g, b));
             }
@@ -255,6 +343,7 @@ fn load_bg_texture(ctx: &egui::Context) -> (egui::TextureHandle, [usize; 2]) {
         (egui::ColorImage { size, pixels }, size)
     };
 
+    // eguiにテクスチャとして登録する。
     (
         ctx.load_texture("bdd_plus_bg", color_image, egui::TextureOptions::LINEAR),
         size,
