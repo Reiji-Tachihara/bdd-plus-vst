@@ -1,15 +1,5 @@
 use nih_plug_egui::egui::Color32;
 
-// パネル内側の余白。
-pub(super) const PANEL_PADDING: f32 = 18.0;
-// 各列の幅。
-pub(super) const COLUMN_WIDTH: f32 = 110.0;
-// スライダーの幅。
-pub(super) const SLIDER_WIDTH: f32 = 36.0;
-// スライダーの高さ。
-pub(super) const SLIDER_HEIGHT: f32 = 165.0;
-// 値表示の高さ。
-pub(super) const VALUE_HEIGHT: f32 = 26.0;
 // 値表示の角丸半径。
 pub(super) const VALUE_RADIUS: f32 = 4.0;
 // 値表示の文字色。

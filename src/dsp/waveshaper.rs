@@ -3,6 +3,7 @@ use nih_plug::prelude::util;
 use super::constants::*;
 use super::filters::one_pole_coeff;
 
+/// ソフトクリップ関数。
 pub(super) fn soft_clip(
     // 入力サンプル。
     input: f32,
@@ -10,7 +11,7 @@ pub(super) fn soft_clip(
     // 入力をソフトクリップする。
     input.tanh()
 }
-
+/// 第1段ドライブゲインを算出する。
 pub(super) fn drive_stage1_gain(
     // ドライブ値。
     drive: f32,
@@ -20,7 +21,7 @@ pub(super) fn drive_stage1_gain(
     // 第1段のゲインに変換する。
     util::db_to_gain(shaped * DRIVE_STAGE1_DB)
 }
-
+/// 事前ブーストゲインを算出する。
 pub(super) fn drive_to_pre_boost(
     // ドライブ値。
     drive: f32,
@@ -30,7 +31,7 @@ pub(super) fn drive_to_pre_boost(
     // 事前ブーストのゲインに変換する。
     util::db_to_gain(DRIVE_PRE_BOOST_DB * shaped)
 }
-
+/// 第2段ドライブのミックス比率を算出する。
 pub(super) fn drive_stage2_gain(
     // ドライブ値。
     drive: f32,
@@ -40,7 +41,7 @@ pub(super) fn drive_stage2_gain(
     // 第2段ゲインを補間する。
     SECOND_STAGE_MIN_GAIN + (SECOND_STAGE_MAX_GAIN - SECOND_STAGE_MIN_GAIN) * mid
 }
-
+/// 第2段のミックス比率を算出する。
 pub(super) fn drive_stage2_mix(
     // ドライブ値。
     drive: f32,
@@ -50,7 +51,7 @@ pub(super) fn drive_stage2_mix(
     // 第2段ブレンド比率を算出する。
     SECOND_STAGE_MIX_MAX * mid
 }
-
+/// ドライブ値をレベル補正ゲインに変換する。
 pub(super) fn drive_to_compensation(
     // ドライブ値。
     drive: f32,
@@ -60,7 +61,7 @@ pub(super) fn drive_to_compensation(
     // レベル補正ゲインに変換する。
     util::db_to_gain(-5.0 * shaped)
 }
-
+/// レベル値をリニアゲインに変換する。
 pub(super) fn level_to_gain(
     // レベル値。
     level: f32,
@@ -71,6 +72,7 @@ pub(super) fn level_to_gain(
     util::db_to_gain(db)
 }
 
+/// トーン値をローパスフィルタ係数に変換する。
 pub(super) fn tone_to_coeff(
     // トーン値。
     tone: f32,
@@ -88,7 +90,7 @@ pub(super) fn tone_to_coeff(
     // 1次ローパス係数に変換する。
     one_pole_coeff(adjusted, sample_rate)
 }
-
+/// エンファシス用ローパス係数を計算する。
 pub(super) fn pre_emphasis_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -96,7 +98,7 @@ pub(super) fn pre_emphasis_coeff(
     // エンファシス用ローパス係数を計算する。
     one_pole_coeff(PRE_EMPH_HZ, sample_rate)
 }
-
+/// タイトニング用ローパス係数を計算する。
 pub(super) fn pre_tighten_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -112,7 +114,7 @@ pub(super) fn dc_block_coeff(
     // DCブロッカ用係数を計算する。
     one_pole_coeff(DC_BLOCK_HZ, sample_rate)
 }
-
+/// 段間ローパス係数を計算する。
 pub(super) fn interstage_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -120,7 +122,7 @@ pub(super) fn interstage_coeff(
     // 段間ローパス係数を計算する。
     one_pole_coeff(INTERSTAGE_LP_HZ, sample_rate * 2.0)
 }
-
+/// 事後ローパス係数を計算する。
 pub(super) fn post_lpf_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -132,7 +134,7 @@ pub(super) fn post_lpf_coeff(
     // 事後ローパス係数を計算する。
     one_pole_coeff(cutoff, sample_rate)
 }
-
+/// 事後ローパスの混合量を算出する。
 pub(super) fn post_lpf_mix(
     // デハーシュ量。
     deharsh: f32,
@@ -140,7 +142,7 @@ pub(super) fn post_lpf_mix(
     // 事後ローパスの混合量。
     POST_LPF_MIX_MAX * deharsh
 }
-
+/// アンチエイリアス用ローパス係数を計算する。
 pub(super) fn aa_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -148,7 +150,7 @@ pub(super) fn aa_coeff(
     // 2x時のアンチエイリアス係数を計算する。
     one_pole_coeff(sample_rate * AA_CUTOFF_RATIO, sample_rate * 2.0)
 }
-
+/// 事前ソフト化ローパス係数を計算する。
 pub(super) fn pre_soften_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -156,7 +158,7 @@ pub(super) fn pre_soften_coeff(
     // 事前ソフト化用ローパス係数。
     one_pole_coeff(PRE_SOFT_LP_HZ, sample_rate)
 }
-
+/// ビンテージローパス係数を計算する。
 pub(super) fn vintage_lpf_coeff(
     // サンプルレート。
     sample_rate: f32,
@@ -170,7 +172,7 @@ pub(super) fn vintage_lpf_coeff(
     // 係数へ変換する。
     one_pole_coeff(cutoff.max(40.0), sample_rate)
 }
-
+/// バイアス減少量を算出する。
 pub(super) fn bias_reduction(
     // ドライブ値。
     drive: f32,
@@ -178,7 +180,7 @@ pub(super) fn bias_reduction(
     // バイアス減少カーブ。
     smoothstep(DEHARSH_START, 1.0, drive)
 }
-
+/// デハーシュ量を算出する。
 pub(super) fn deharsh_amount(
     // ドライブ値。
     drive: f32,
@@ -186,7 +188,7 @@ pub(super) fn deharsh_amount(
     // デハーシュの量を0..1に正規化。
     ((drive - DEHARSH_START) / (1.0 - DEHARSH_START)).clamp(0.0, 1.0)
 }
-
+/// 中域フォーカスの強さを算出する。
 pub(super) fn drive_mid_focus(
     // ドライブ値。
     drive: f32,
@@ -194,7 +196,7 @@ pub(super) fn drive_mid_focus(
     // 中域フォーカスの曲線。
     smoothstep(0.3, 0.7, drive)
 }
-
+/// ドライブ値を曲線で整形する。
 fn drive_curve(
     // ドライブ値。
     drive: f32,
@@ -206,7 +208,7 @@ fn drive_curve(
     // 曲線で強調する。
     shaped.powf(power)
 }
-
+/// スムースステップ補間を行う。
 fn smoothstep(
     // 下限エッジ。
     edge0: f32,
@@ -220,14 +222,15 @@ fn smoothstep(
     // 3次で滑らかに補間する。
     t * t * (3.0 - 2.0 * t)
 }
-
+//soft_clip() が「有限な値を返し、極端に振り切れない」ことを確認
 #[cfg(test)]
 mod tests {
     use super::soft_clip;
 
     #[test]
     fn soft_clip_is_bounded() {
-        for value in [-10.0, -1.0, 0.0, 1.0, 10.0] { // テスト入力値。
+        for value in [-10.0, -1.0, 0.0, 1.0, 10.0] {
+            // テスト入力値。
             // クリップ結果。
             let shaped = soft_clip(value);
             assert!(shaped.is_finite());

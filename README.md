@@ -29,7 +29,7 @@ cargo xtask bundle bdd_plus --release
 - `src/lib.rs`: プラグインのエントリポイント
 - `src/params.rs`: パラメータ定義
 - `src/dsp/`: DSP 実装
-- `src/gui/`: GUI 実装（途中）
+- `src/gui/`: GUI 実装
 - `assets/bg.png`: 背景テクスチャ
 
 ## 音楽的特徴

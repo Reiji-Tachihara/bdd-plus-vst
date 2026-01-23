@@ -6,6 +6,7 @@ use constants::*;
 use filters::{peaking_eq_coeffs, Biquad, BiquadCoeffs, OnePole};
 use waveshaper::*;
 
+/// チャンネルごとのDSP状態。
 #[derive(Clone, Copy)]
 struct ChannelState {
     // 事前EQ用のバイカッド。
@@ -35,7 +36,7 @@ struct ChannelState {
     // 前回入力サンプル(2x補間用)。
     prev_input: f32,
 }
-
+/// チャンネル状態の初期化。
 impl Default for ChannelState {
     fn default() -> Self {
         Self {
@@ -56,7 +57,7 @@ impl Default for ChannelState {
         }
     }
 }
-
+/// チャンネル状態のリセット。
 impl ChannelState {
     fn reset(&mut self) {
         // チャンネル内の全フィルタ状態をリセットする。
@@ -75,7 +76,7 @@ impl ChannelState {
         self.prev_input = 0.0;
     }
 }
-
+/// DSPエンジン本体。
 pub struct Dsp {
     // 現在のサンプルレート。
     sample_rate: f32,
@@ -84,7 +85,7 @@ pub struct Dsp {
     // 事前EQの係数。
     pre_eq_coeffs: BiquadCoeffs,
 }
-
+/// DSPエンジンの初期化。
 impl Default for Dsp {
     fn default() -> Self {
         Self {
@@ -97,7 +98,7 @@ impl Default for Dsp {
         }
     }
 }
-
+/// DSPエンジンの処理。
 impl Dsp {
     pub fn initialize(
         &mut self,
@@ -111,12 +112,8 @@ impl Dsp {
         // チャンネル数に応じて状態を確保する。
         self.channels.resize_with(channels, ChannelState::default);
         // 事前EQ係数を更新する。
-        self.pre_eq_coeffs = peaking_eq_coeffs(
-            PRE_EQ_FREQ_HZ,
-            PRE_EQ_Q,
-            PRE_EQ_GAIN_DB,
-            self.sample_rate,
-        );
+        self.pre_eq_coeffs =
+            peaking_eq_coeffs(PRE_EQ_FREQ_HZ, PRE_EQ_Q, PRE_EQ_GAIN_DB, self.sample_rate);
         // 内部状態をリセットする。
         self.reset();
     }
@@ -147,7 +144,7 @@ impl Dsp {
         // DCブロッカ係数を返す。
         dc_block_coeff(self.sample_rate)
     }
-
+    /// サンプルを処理する。
     pub fn process_sample(
         &mut self,
         // チャンネル番号。
@@ -201,7 +198,9 @@ impl Dsp {
         let stage2_mix = drive_stage2_mix(drive);
 
         // クリップ前に低域を締める。
-        let eq = state.pre_eq.process(input + ANTI_DENORMAL, self.pre_eq_coeffs);
+        let eq = state
+            .pre_eq
+            .process(input + ANTI_DENORMAL, self.pre_eq_coeffs);
         // 低域タイト化後の信号。
         let tightened = state.pre_tighten.highpass(eq, pre_tighten_coeff);
         // エンファシス後の信号。

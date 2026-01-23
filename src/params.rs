@@ -19,30 +19,24 @@ pub(crate) struct BddPlusParams {
     pub bypass: BoolParam,
 }
 
+fn make_param(name: &str, default: f32) -> FloatParam {
+    FloatParam::new(name, default, FloatRange::Linear { min: 0.0, max: 1.0 })
+        .with_step_size(GUI_STEP_SIZE)
+        .with_smoother(SmoothingStyle::Linear(50.0))
+        .with_unit(" %")
+        .with_value_to_string(formatters::v2s_f32_percentage(0))
+        .with_string_to_value(formatters::s2v_f32_percentage())
+}
+
 impl Default for BddPlusParams {
     fn default() -> Self {
         Self {
             // ドライブパラメータ。
-            drive: FloatParam::new("Drive", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_step_size(GUI_STEP_SIZE)
-                .with_smoother(SmoothingStyle::Linear(50.0))
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_percentage(0))
-                .with_string_to_value(formatters::s2v_f32_percentage()),
+            drive: make_param("Drive", 0.5),
             // トーンパラメータ。
-            tone: FloatParam::new("Tone", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_step_size(GUI_STEP_SIZE)
-                .with_smoother(SmoothingStyle::Linear(50.0))
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_percentage(0))
-                .with_string_to_value(formatters::s2v_f32_percentage()),
+            tone: make_param("Tone", 0.5),
             // レベルパラメータ。
-            level: FloatParam::new("Level", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_step_size(GUI_STEP_SIZE)
-                .with_smoother(SmoothingStyle::Linear(50.0))
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_percentage(0))
-                .with_string_to_value(formatters::s2v_f32_percentage()),
+            level: make_param("Level", 0.5),
             // バイパスパラメータ。
             bypass: BoolParam::new("Bypass", false)
                 .make_bypass()
