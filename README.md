@@ -4,6 +4,10 @@ Rust(nih-plug)製オーバードライブ系オーディオプラグインです
 VST3/CLAP に対応し、Cubase 13（Windows）で動作確認しています。
 DSP ロジックはリアルタイム安全性を意識して設計しました。
 
+## GUI
+
+![GUIスクリーンショット](E:\bdd_plus\assets\bdd+イメージ.png)
+
 ## ビルド
 
 Rust をインストールした上で、以下を実行してください。
