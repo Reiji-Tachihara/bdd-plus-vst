@@ -5,6 +5,9 @@ VST3/CLAP に対応し、Cubase 13（Windows）で動作確認しています。
 DSP ロジックはリアルタイム安全性を意識して設計しました。
 
 ## GUI
+<p align="center">
+  <img src="images/gui.png" alt="GUI">
+</p>
 
 ![GUIスクリーンショット](assets/bdd+イメージ.png)
 
