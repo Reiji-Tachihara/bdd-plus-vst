@@ -23,6 +23,20 @@ struct UiState {
     // テクスチャマネージャの識別子。
     bg_tex_manager_id: usize,
 }
+// 背景テクスチャを再読み込みする。
+fn refresh_bg_texture(state: &mut UiState, ctx: &egui::Context) {
+    let (texture, size) = load_bg_texture(ctx);
+    state.bg_texture = Some(texture);
+    state.bg_size_px = size;
+    state.bg_tex_manager_id = tex_manager_id(ctx);
+}
+// ピクセル座標からRectを作成する。
+fn rect_from_px(base: Pos2, scale: f32, px: (f32, f32, f32, f32)) -> Rect {
+    Rect::from_min_size(
+        Pos2::new(base.x + px.0 * scale, base.y + px.1 * scale),
+        Vec2::new(px.2 * scale, px.3 * scale),
+    )
+}
 
 // 背景画像をUI全体に対して縮小する比率。
 const BG_SCALE: f32 = 0.6;
@@ -65,10 +79,7 @@ pub(super) fn create_editor(
         },
         |ctx, state| {
             // ウィンドウ生成のたびに背景テクスチャを読み込む。
-            let (texture, size) = load_bg_texture(ctx);
-            state.bg_texture = Some(texture);
-            state.bg_size_px = size;
-            state.bg_tex_manager_id = tex_manager_id(ctx);
+            refresh_bg_texture(state, ctx);
         },
         move |ctx, setter, state| {
             let tex_manager_id = tex_manager_id(ctx);
@@ -79,12 +90,9 @@ pub(super) fn create_editor(
                     None => true,
                 };
             if needs_reload {
-                let (texture, size) = load_bg_texture(ctx);
-                state.bg_texture = Some(texture);
-                state.bg_size_px = size;
-                state.bg_tex_manager_id = tex_manager_id;
+                refresh_bg_texture(state, ctx);
             }
-
+            // 中央パネルにUIを描画する。
             egui::CentralPanel::default().show(ctx, |ui| {
                 // DPI変換用の係数。
                 let pixels_per_point = ui.ctx().pixels_per_point();
@@ -160,16 +168,8 @@ fn draw_fixed_layout(
     let columns = [(&params.drive), (&params.tone), (&params.level)];
 
     for (idx, param) in columns.iter().enumerate() {
-        let (value_x, value_y, value_w, value_h) = VALUE_WINDOWS_PX[idx];
-        let value_rect = Rect::from_min_size(
-            Pos2::new(base.x + value_x * scale, base.y + value_y * scale),
-            Vec2::new(value_w * scale, value_h * scale),
-        );
-        let (slot_x, slot_y, slot_w, slot_h) = SLIDER_SLOTS_PX[idx];
-        let slider_rect = Rect::from_min_size(
-            Pos2::new(base.x + slot_x * scale, base.y + slot_y * scale),
-            Vec2::new(slot_w * scale, slot_h * scale),
-        );
+        let value_rect = rect_from_px(base, scale, VALUE_WINDOWS_PX[idx]);
+        let slider_rect = rect_from_px(base, scale, SLIDER_SLOTS_PX[idx]);
         draw_column_at(ui, setter, param, idx, value_rect, slider_rect, scale);
     }
 }
@@ -270,8 +270,7 @@ fn draw_slider_at(
         if let Some(pos) = response.interact_pointer_pos() {
             // マウス位置。
             // ドラッグ位置から新しい値を計算する。
-            let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
-            setter.set_parameter(param, new_value);
+            set_param_from_pos(setter, param, rect, pos);
         }
     }
     if response.drag_stopped() {
@@ -281,25 +280,32 @@ fn draw_slider_at(
         if let Some(pos) = response.interact_pointer_pos() {
             // マウス位置。
             // クリック位置から新しい値を計算する。
-            let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
             setter.begin_set_parameter(param);
-            setter.set_parameter(param, new_value);
+            set_param_from_pos(setter, param, rect, pos);
             setter.end_set_parameter(param);
         }
     }
+}
+
+fn set_param_from_pos(
+    setter: &ParamSetter,
+    param: &nih_plug::params::FloatParam,
+    rect: Rect,
+    pos: Pos2,
+) {
+    let new_value = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
+    setter.set_parameter(param, new_value);
 }
 
 // 背景画像のピクセルサイズを返す。
 fn bg_size_px() -> [usize; 2] {
     // 背景画像バイト列。
     const BG_BYTES: &[u8] = include_bytes!("../../assets/bg.png");
-    image::load_from_memory(BG_BYTES)
-        .ok()
-        .map(|img| [img.width() as usize, img.height() as usize])
-        .unwrap_or([256, 256])
+    let img = image::load_from_memory(BG_BYTES).expect("背景画像の読み込みに失敗しました");
+    [img.width() as usize, img.height() as usize]
 }
 
-// 背景画像のテクスチャを読み込み、ない場合は代替画像を作る。
+// 背景画像のテクスチャを読み込む。
 fn load_bg_texture(
     // eguiのコンテキスト。
     ctx: &egui::Context,
@@ -308,40 +314,12 @@ fn load_bg_texture(
     const BG_BYTES: &[u8] = include_bytes!("../../assets/bg.png");
     // 画像をRGBAに変換する。
     let image = image::load_from_memory(BG_BYTES)
-        .ok()
-        .map(|img| img.to_rgba8());
+        .expect("背景画像の読み込みに失敗しました")
+        .to_rgba8();
 
-    // eguiで使う画像とサイズ。
-    let (color_image, size) = if let Some(image) = image {
-        // 読み込んだ画像。
-        // 背景画像のサイズ。
-        let size = [image.width() as usize, image.height() as usize];
-        (
-            egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
-            size,
-        )
-    } else {
-        // 代替画像のサイズ。
-        let size = [256, 256];
-        // 代替画像のピクセル配列。
-        let mut pixels = Vec::with_capacity(size[0] * size[1]);
-        for y in 0..size[1] {
-            // Y方向の走査。
-            for x in 0..size[0] {
-                // X方向の走査。
-                // 擬似的なノイズ値。
-                let n = ((x * 13 + y * 17) & 0x1f) as u8;
-                // 赤成分。
-                let r = 60 + n;
-                // 緑成分。
-                let g = 54 + (n / 2);
-                // 青成分。
-                let b = 48 + (n / 3);
-                pixels.push(Color32::from_rgb(r, g, b));
-            }
-        }
-        (egui::ColorImage { size, pixels }, size)
-    };
+    // 背景画像のサイズ。
+    let size = [image.width() as usize, image.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
 
     // eguiにテクスチャとして登録する。
     (

@@ -12,13 +12,13 @@ impl Default for OnePole {
         Self { z1: 0.0 }
     }
 }
-
+// 1次IIRフィルタの実装。
 impl OnePole {
     pub(super) fn reset(&mut self) {
         // フィルタ状態を初期化する。
         self.z1 = 0.0;
     }
-
+    /// ローパスフィルタを適用する。
     pub(super) fn lowpass(
         &mut self,
         // 入力サンプル。
@@ -31,7 +31,7 @@ impl OnePole {
         // ローパス出力。
         self.z1
     }
-
+    /// ハイパスフィルタを適用する。
     pub(super) fn highpass(
         &mut self,
         // 入力サンプル。
@@ -43,7 +43,7 @@ impl OnePole {
         input - self.lowpass(input, coeff)
     }
 }
-
+/// 双一次フィルタの状態。
 #[derive(Clone, Copy, Default)]
 pub(super) struct Biquad {
     // 双一次変換の遅延状態1。
@@ -51,7 +51,7 @@ pub(super) struct Biquad {
     // 双一次変換の遅延状態2。
     z2: f32,
 }
-
+/// 双一次フィルタの係数。
 #[derive(Clone, Copy, Default)]
 pub(super) struct BiquadCoeffs {
     // フィードフォワード係数0。
@@ -65,7 +65,7 @@ pub(super) struct BiquadCoeffs {
     // フィードバック係数2。
     pub(super) a2: f32,
 }
-
+/// 双一次フィルタの実装。
 impl Biquad {
     pub(super) fn reset(&mut self) {
         // 双一次の遅延状態をクリアする。
@@ -90,7 +90,7 @@ impl Biquad {
         out
     }
 }
-
+/// ピーキングEQのバイカッド係数を計算する。
 pub(super) fn peaking_eq_coeffs(
     // 中心周波数。
     freq_hz: f32,
@@ -141,6 +141,7 @@ pub(super) fn peaking_eq_coeffs(
     }
 }
 
+// 1次IIRフィルタの係数を計算する。
 pub(super) fn one_pole_coeff(
     // カットオフ周波数。
     cutoff: f32,
