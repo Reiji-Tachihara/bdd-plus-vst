@@ -2,11 +2,11 @@
 
 Rust(nih-plug)製オーバードライブ系オーディオプラグインです。
 VST3/CLAP に対応し、Cubase 13（Windows）で動作確認しています。
-DSP ロジックはリアルタイム安全性を意識して設計しました。
 
 ## GUI
-
-![GUIスクリーンショット](assets/bdd+イメージ.png)
+<p align="center">
+  <img src="assets/bdd+イメージ.png" alt="GUI">
+</p>
 
 ## ビルド
 
@@ -17,7 +17,7 @@ cargo xtask bundle bdd_plus --release
 
 ## 仕様
 
-- パラメータ: Drive / Tone / Level / Bypass（ホストバイパス連携）
+- パラメータ: Drive / Tone / Level / 
 - フォーマット: VST3 / CLAP
 - GUI: eguiで背景テクスチャ上に3本縦スライダーを描画
 - ピッキングニュアンスに追従するタッチセンシティブな歪み特性
@@ -25,7 +25,6 @@ cargo xtask bundle bdd_plus --release
 - プリ／インターステージ／ポストのフィルタ構成による音色制御
 - 2x オーバーサンプリングによるエイリアシング低減
 - サンプル精度のパラメータオートメーション対応
-- egui によるカスタムGUI実装
 - VST3 / CLAP フォーマット対応
 
 ## 構成
